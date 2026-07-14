@@ -12,15 +12,13 @@ ROOT_DIR = Path(__file__).parents[2]
 sys.path.append(str(ROOT_DIR))
 
 LOCK_SEPARATOR = "||"
-SHORT_LOCK_DURATION = datetime.timedelta(hours=5)
-LONG_LOCK_DURATION = datetime.timedelta(days=7)
+LOCK_DURATION = datetime.timedelta(hours=5)
 
 class KeysManager:
     def __init__(self, file_path: str, cloud_base_url: str = "",
-                 short_lock_path: str = "", long_lock_path: str = ""):
+                 lock_path: str = ""):
         self._file_path = Path(file_path)
-        self._short_lock_path = Path(short_lock_path) if short_lock_path else None
-        self._long_lock_path = Path(long_lock_path) if long_lock_path else None
+        self._lock_path = Path(lock_path) if lock_path else None
         self._cloud_base = cloud_base_url.rstrip("/")
         self._keys: list[str] = []
         self._locked_keys: set[str] = set()
@@ -32,42 +30,38 @@ class KeysManager:
 
     def _load_locked_keys(self) -> set[str]:
         locked: set[str] = set()
-        for path, duration in (
-            (self._short_lock_path, SHORT_LOCK_DURATION),
-            (self._long_lock_path, LONG_LOCK_DURATION),
-        ):
-            if not path or not path.exists():
+        if not self._lock_path or not self._lock_path.exists():
+            return locked
+        now = datetime.datetime.now(datetime.timezone.utc)
+        valid_lines: list[str] = []
+        expired_count = 0
+        for line in self._lock_path.read_text().splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#"):
+                valid_lines.append(raw)
                 continue
-            now = datetime.datetime.now(datetime.timezone.utc)
-            valid_lines: list[str] = []
-            expired_count = 0
-            for line in path.read_text().splitlines():
-                raw = line.strip()
-                if not raw or raw.startswith("#"):
+            if LOCK_SEPARATOR in raw:
+                key, ts_str = raw.split(LOCK_SEPARATOR, 1)
+                try:
+                    ts = datetime.datetime.fromisoformat(ts_str)
+                    if now - ts > LOCK_DURATION:
+                        expired_count += 1
+                        continue
+                    locked.add(key)
                     valid_lines.append(raw)
                     continue
-                if LOCK_SEPARATOR in raw:
-                    key, ts_str = raw.split(LOCK_SEPARATOR, 1)
-                    try:
-                        ts = datetime.datetime.fromisoformat(ts_str)
-                        if now - ts > duration:
-                            expired_count += 1
-                            continue
-                        locked.add(key)
-                        valid_lines.append(raw)
-                        continue
-                    except ValueError:
-                        pass
-                locked.add(raw)
-                valid_lines.append(raw)
-            if expired_count:
-                content = "\n".join(valid_lines)
-                if content:
-                    content += "\n"
-                path.write_text(content)
-                logger.info("Cleaned %d expired key(s) from %s", expired_count, path)
-            if locked:
-                logger.info("Loaded %d locked key(s) from %s", len(locked), path)
+                except ValueError:
+                    pass
+            locked.add(raw)
+            valid_lines.append(raw)
+        if expired_count:
+            content = "\n".join(valid_lines)
+            if content:
+                content += "\n"
+            self._lock_path.write_text(content)
+            logger.info("Cleaned %d expired key(s) from %s", expired_count, self._lock_path)
+        if locked:
+            logger.info("Loaded %d locked key(s) from %s", len(locked), self._lock_path)
         return locked
 
     def load_keys(self) -> list[str]:
@@ -79,12 +73,12 @@ class KeysManager:
             for line in self._file_path.read_text().splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
+        self._keys = list(keys)
         self._locked_keys = self._load_locked_keys()
+        self._healthy_keys = [k for k in self._keys if k not in self._locked_keys]
         if self._locked_keys:
-            keys = [k for k in keys if k not in self._locked_keys]
-            logger.info("Filtered out %d locked key(s)", len(self._locked_keys))
-        self._keys = keys
-        self._healthy_keys = list(keys)
+            logger.info("Filtered out %d locked key(s), %d healthy",
+                        len(self._locked_keys), len(self._healthy_keys))
         logger.info("Loaded %d key(s) from %s", len(keys), self._file_path)
         return keys
 
