@@ -94,6 +94,7 @@ r = requests.delete("http://localhost:11435/api/delete", json={"model": "gemma4:
 
 | Status | Meaning |
 |---|---|
+| `429` | All cloud keys locked or none available |
 | `502` | Backend unreachable |
 | `503` | Cloud URL or key missing |
 | `504` | Backend timed out |
@@ -104,3 +105,11 @@ r = requests.delete("http://localhost:11435/api/delete", json={"model": "gemma4:
 1. `secrets/keys.txt` (round-robin with health checks)
 2. `WARP_CLOUD_API_KEY` env var
 3. `503` if neither
+
+### Key locking
+
+Keys are auto-locked on `429` responses or 3 consecutive timeouts. Locked keys are stored in
+`secrets/ollama_keys_lock.txt` with a timestamp. Unlocking happens automatically via:
+- Background cleanup every **10 minutes**
+- Lock file check on **every endpoint call**
+- **5-hour expiry** of lock entries
