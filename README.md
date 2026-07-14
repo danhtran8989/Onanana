@@ -9,6 +9,11 @@ Client -> :11435 -> OllamaProvider -> localhost:11434 (no auth)
 
 Routing is determined by **model name suffix** (default `-cloud`) or **`?source=` query param**.
 
+## Prerequisites
+
+- **Local** — [Ollama](https://ollama.com) must be installed and running on the target host (default `http://localhost:11434`)
+- **Cloud** — one or more API keys saved in `secrets/keys.txt` (one per line, see [`secrets/keys.txt.example`](secrets/keys.txt.example))
+
 ## Quick start
 
 ```bash
@@ -29,6 +34,18 @@ The cloud suffix is `-cloud` (hardcoded in `src/onanana/providers/ollama.py`).
 
 Cloud auth: token from `secrets/keys.txt` (round-robin with health checks) → `WARP_CLOUD_API_KEY` env var → `503`.
 
+## Key locking & unlocking
+
+When a cloud key gets a `429` (rate limited) or times out 3 times, it is locked into `secrets/ollama_keys_lock.txt` so it won't be reused. Keys are unlocked automatically in **3 ways**:
+
+| # | Trigger | When |
+|---|---|---|
+| 1 | Background task | Every **10 minutes** (`apis/main.py` cleanup loop) |
+| 2 | On every endpoint call | Before each request, lock file is checked and expired entries removed |
+| 3 | Lock file expiry | **5 hours** after a key was locked (`LOCK_DURATION` in `keys_manager.py`) |
+
+When all keys are locked, the proxy returns `429` instead of `500`.
+
 ## Configuration
 
 `WARP_` env vars or `secrets/.env` file (see `src/onanana/config.py`):
@@ -41,6 +58,7 @@ Cloud auth: token from `secrets/keys.txt` (round-robin with health checks) → `
 | `WARP_CLOUD_OLLAMA_BASE_URL` | `""` | Cloud API endpoint |
 | `WARP_CLOUD_API_KEY` | `""` | Fallback Bearer token |
 | `WARP_KEYS_FILE_PATH` | `secrets/keys.txt` | API tokens file |
+| `WARP_LOCK_FILE_PATH` | `secrets/ollama_keys_lock.txt` | Key lock file (auto-resets every 5h) |
 | `WARP_CLOUD_MODEL_SUFFIX` | `-cloud` | Suffix for cloud model routing (defined in config, wired in source) |
 
 ## Architecture
