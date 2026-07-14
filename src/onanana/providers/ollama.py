@@ -22,8 +22,7 @@ class OllamaProvider:
         keys_manager: KeysManager,
         client: httpx.AsyncClient | None = None,
         cloud_api_key: str = "",
-        short_lock_path: str = "",
-        long_lock_path: str = "",
+        lock_path: str = "",
     ):
         self._local_base = local_base_url.rstrip("/")
         self._cloud_base = cloud_base_url.rstrip("/")
@@ -31,8 +30,7 @@ class OllamaProvider:
         self._client = client or httpx.AsyncClient(timeout=300.0)
         self._req_builder = OllamaRequestBuilder(self._client)
         self._fallback_api_key = cloud_api_key
-        self._short_lock_path = Path(short_lock_path) if short_lock_path else None
-        self._long_lock_path = Path(long_lock_path) if long_lock_path else None
+        self._lock_path = Path(lock_path) if lock_path else None
         self._timeout_count: dict[str, int] = {}
 
     def _append_to_lock(self, path: Path | None, key: str):
@@ -74,7 +72,7 @@ class OllamaProvider:
                 if token:
                     self._timeout_count[token] = self._timeout_count.get(token, 0) + 1
                     if self._timeout_count[token] >= MAX_RETRIES:
-                        self._append_to_lock(self._short_lock_path, token)
+                        self._append_to_lock(self._lock_path, token)
                         break
         raise httpx.TimeoutException(f"Request failed after {MAX_RETRIES} timeouts")
 
@@ -122,7 +120,7 @@ class OllamaProvider:
                 stream=stream, token=token,
             )
             if resp.status_code == 429 and token:
-                self._append_to_lock(self._short_lock_path, token)
+                self._append_to_lock(self._lock_path, token)
             return resp
 
         return await self._req_builder.send_request(
@@ -148,7 +146,7 @@ class OllamaProvider:
                 headers=headers, stream=False, token=token,
             )
             if resp.status_code == 429 and token:
-                self._append_to_lock(self._short_lock_path, token)
+                self._append_to_lock(self._lock_path, token)
             return resp
         url = f"{self._local_base}/{path.lstrip('/')}"
         logger.debug("Proxying local GET %s -> %s", path, url)
@@ -171,7 +169,7 @@ class OllamaProvider:
                 stream=False, token=token,
             )
             if resp.status_code == 429 and token:
-                self._append_to_lock(self._short_lock_path, token)
+                self._append_to_lock(self._lock_path, token)
             return resp
 
         return await self._req_builder.send_request(
