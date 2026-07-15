@@ -134,23 +134,21 @@ class OllamaProvider:
     async def resolve_backend(self, model: str) -> tuple[str, str]:
         return await self._get_backend_url(model)
 
-    async def proxy_get(self, path: str, *, source: str = "local") -> httpx.Response:
+    async def proxy_get(self, path: str, *, source: str = "local", method: str = "GET") -> httpx.Response:
+        method = method.upper()
         if source == "cloud":
             base, token, headers = await self._resolve_cloud_auth()
             if not token:
                 raise RuntimeError("No API key available for cloud endpoint")
             url = f"{base}/{path.lstrip('/')}"
-            logger.debug("Proxying cloud GET %s -> %s", path, url)
-            resp = await self._send_with_retry(
-                path, base, None,
-                headers=headers, stream=False, token=token,
-            )
+            logger.debug("Proxying cloud %s %s -> %s", method, path, url)
+            resp = await self._client.request(method, url, headers=headers)
             if resp.status_code == 429 and token:
                 self._append_to_lock(self._lock_path, token)
             return resp
         url = f"{self._local_base}/{path.lstrip('/')}"
-        logger.debug("Proxying local GET %s -> %s", path, url)
-        return await self._client.get(url)
+        logger.debug("Proxying local %s %s -> %s", method, path, url)
+        return await self._client.request(method, url)
 
     async def proxy_delete(
         self, path: str, json_body: dict[str, Any] | None, *, source: str | None = None

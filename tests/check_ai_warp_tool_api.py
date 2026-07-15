@@ -140,6 +140,56 @@ class TestDeleteEndpoint:
         assert resp.status_code == 200
 
 
+class TestV1Endpoints:
+    def test_chat_completions_local(self, test_app):
+        resp = test_app.post("/v1/chat/completions", json={
+            "model": "gemma4:26b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+        })
+        assert resp.status_code == 200
+
+    def test_chat_completions_cloud_suffix(self, test_app):
+        resp = test_app.post("/v1/chat/completions", json={
+            "model": "gemma4:31b-cloud",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+        })
+        assert resp.status_code == 200
+
+    def test_completions(self, test_app):
+        resp = test_app.post("/v1/completions", json={
+            "model": "gemma4:26b",
+            "prompt": "hello",
+            "stream": False,
+        })
+        assert resp.status_code == 200
+
+    def test_embeddings(self, test_app):
+        resp = test_app.post("/v1/embeddings", json={
+            "model": "gemma4:26b",
+            "input": "hello",
+        })
+        assert resp.status_code == 200
+
+    def test_list_models(self, test_app):
+        resp = test_app.get("/v1/models")
+        assert resp.status_code == 200
+
+    def test_list_models_cloud(self, test_app):
+        resp = test_app.get("/v1/models?source=cloud")
+        assert resp.status_code == 200
+
+    def test_chat_completions_streaming_sse(self, test_app):
+        resp = test_app.post("/v1/chat/completions", json={
+            "model": "gemma4:26b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        })
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+
+
 class TestInvalidInputs:
     def test_invalid_source_value(self, test_app):
         resp = test_app.get("/api/version?source=invalid")

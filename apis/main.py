@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import httpx
 import uvicorn
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parents[1]))
@@ -60,6 +60,66 @@ async def no_key_handler(request: Request, exc: RuntimeError):
     return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
+def _resolve_v1_path(rest: str, source: str | None) -> tuple[str, str | None]:
+    """For GET /v1/models/{name}, infer cloud + strip -cloud from path when needed."""
+    if not rest.startswith("models/"):
+        return rest, source
+    model = rest[len("models/"):]
+    if source is None and OllamaProvider.is_cloud_model(model):
+        source = "cloud"
+    if source == "cloud":
+        return f"models/{OllamaProvider.strip_cloud_suffix(model)}", source
+    return rest, source
+
+
+def _stream_media_type(path: str) -> str:
+    if path.startswith("v1/"):
+        return "text/event-stream"
+    return "application/x-ndjson"
+
+
+async def _forward(
+    request: Request,
+    path: str,
+    *,
+    source: str | None = None,
+):
+    km.cleanup_expired_locks()
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    if "messages" in body and "generate" in path:
+        for msg in body["messages"]:
+            if msg.get("role") == "system":
+                body["system"] = msg["content"]
+            elif msg.get("role") == "user":
+                body["prompt"] = msg["content"]
+        body.pop("messages", None)
+        body.pop("message", None)
+
+    method = request.method
+    is_stream = body.get("stream", False) if method == "POST" else False
+
+    if method in ("GET", "HEAD"):
+        resp = await provider.proxy_get(path, source=source or "local", method=method)
+    elif method == "DELETE":
+        resp = await provider.proxy_delete(path, body, source=source)
+    else:
+        resp = await provider.proxy_request(path, body, stream=is_stream, source=source)
+
+    if method == "HEAD":
+        await resp.aread()
+        return Response(status_code=resp.status_code)
+
+    if is_stream:
+        return StreamingResponse(resp.aiter_bytes(), media_type=_stream_media_type(path))
+    await resp.aread()
+    return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+
 @app.get("/api/version")
 async def version(source: str = Query("local", pattern="^(local|cloud)$")):
     km.cleanup_expired_locks()
@@ -76,46 +136,24 @@ async def tags(source: str = Query("local", pattern="^(local|cloud)$")):
     return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
 
-@app.post("/api/{rest:path}")
-@app.get("/api/{rest:path}")
-@app.delete("/api/{rest:path}")
-async def proxy(
+@app.api_route("/api/{rest:path}", methods=["GET", "POST", "DELETE", "HEAD"])
+async def proxy_api(
     request: Request,
     rest: str,
     source: str = Query(None, pattern="^(local|cloud)$"),
-    prompt: str = Query(None),
-    system: str = Query(None),
 ):
-    km.cleanup_expired_locks()
+    return await _forward(request, f"api/{rest}", source=source)
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
 
-    if "messages" in body and "generate" in rest:
-        for msg in body["messages"]:
-            if msg.get("role") == "system":
-                body["system"] = msg["content"]
-            elif msg.get("role") == "user":
-                body["prompt"] = msg["content"]
-        body.pop("messages", None)
-        body.pop("message", None)
-
-    method = request.method
-    is_stream = body.get("stream", False) if method == "POST" else False
-
-    if method == "GET":
-        resp = await provider.proxy_get(f"api/{rest}", source=source or "local")
-    elif method == "DELETE":
-        resp = await provider.proxy_delete(f"api/{rest}", body, source=source)
-    else:
-        resp = await provider.proxy_request(f"api/{rest}", body, stream=is_stream, source=source)
-
-    if is_stream:
-        return StreamingResponse(resp.aiter_bytes(), media_type="application/x-ndjson")
-    await resp.aread()
-    return JSONResponse(content=resp.json(), status_code=resp.status_code)
+@app.api_route("/v1/{rest:path}", methods=["GET", "POST", "DELETE", "HEAD"])
+async def proxy_v1(
+    request: Request,
+    rest: str,
+    source: str = Query(None, pattern="^(local|cloud)$"),
+):
+    """OpenAI-compatible endpoints: chat/completions, completions, embeddings, models, responses, etc."""
+    rest, resolved = _resolve_v1_path(rest, source)
+    return await _forward(request, f"v1/{rest}", source=resolved)
 
 
 if __name__ == "__main__":
