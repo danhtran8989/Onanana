@@ -90,6 +90,49 @@ Streaming responses pass through transparently (`GET` endpoints do not support s
 r = requests.delete("http://localhost:11435/api/delete", json={"model": "gemma4:26b"})
 ```
 
+### Other native Ollama `/api/*` routes
+
+`GET|POST|DELETE|HEAD /api/{path}` is proxied (e.g. `/api/ps`, `/api/embed`, `/api/blobs/...`).
+
+## OpenAI-compatible endpoints (`/v1/*`)
+
+Same local/cloud routing as `/api/*` (`-cloud` suffix or `?source=`). Streaming uses `text/event-stream`.
+
+| Method | Path |
+|---|---|
+| `POST` | `/v1/chat/completions` |
+| `POST` | `/v1/completions` |
+| `POST` | `/v1/embeddings` |
+| `POST` | `/v1/responses` |
+| `POST` | `/v1/images/generations` |
+| `GET` | `/v1/models` |
+| `GET` | `/v1/models/{model}` |
+
+```python
+# OpenAI-style chat
+r = requests.post("http://localhost:11435/v1/chat/completions", json={
+    "model": "gemma4:31b-cloud",
+    "messages": [{"role": "user", "content": "hi"}],
+    "stream": False,
+})
+
+# List models (OpenAI format)
+r = requests.get("http://localhost:11435/v1/models")
+r = requests.get("http://localhost:11435/v1/models?source=cloud")
+```
+
+Use with OpenAI SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:11435/v1/", api_key="ollama")
+r = client.chat.completions.create(
+    model="gemma4:26b",
+    messages=[{"role": "user", "content": "hi"}],
+)
+```
+
 ## Errors
 
 | Status | Meaning |

@@ -24,12 +24,23 @@ ENDPOINTS = {
     "generate": {"method": "POST", "model": GenerateRequest},
     "chat": {"method": "POST", "model": ChatRequest},
     "embeddings": {"method": "POST", "model": EmbedRequest},
+    "embed": {"method": "POST", "model": EmbedRequest},
     "create": {"method": "POST", "model": CreateRequest},
     "pull": {"method": "POST", "model": PullRequest},
     "push": {"method": "POST", "model": PushRequest},
     "show": {"method": "POST", "model": ShowRequest},
     "copy": {"method": "POST", "model": CopyRequest},
     "delete": {"method": "DELETE", "model": DeleteRequest},
+}
+
+# OpenAI-compatible paths (method inference for request builder)
+V1_ENDPOINTS = {
+    "chat/completions": "POST",
+    "completions": "POST",
+    "embeddings": "POST",
+    "responses": "POST",
+    "images/generations": "POST",
+    "models": "GET",
 }
 
 
@@ -74,9 +85,18 @@ class OllamaRequestBuilder:
 
     @staticmethod
     def _method_for_path(api_path: str) -> str:
+        path = api_path.lstrip("/")
         for name, info in ENDPOINTS.items():
-            if api_path.endswith(f"/api/{name}") or api_path == f"api/{name}":
+            if path.endswith(f"api/{name}") or path == f"api/{name}":
                 return info["method"]
+        for name, method in V1_ENDPOINTS.items():
+            if path == f"v1/{name}" or path.endswith(f"/v1/{name}"):
+                return method
+            # GET /v1/models/{model}
+            if name == "models" and (
+                path.startswith("v1/models/") or "/v1/models/" in path
+            ):
+                return "GET"
         return "POST"
 
     @staticmethod
