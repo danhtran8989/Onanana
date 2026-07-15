@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).parents[1]))
 
 from src.onanana.config import settings
 from src.onanana.keys_manager import KeysManager
+from src.onanana.openai import convert_ndjson_to_sse, to_openai_completion
 from src.onanana.providers.ollama import OllamaProvider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -116,6 +117,37 @@ async def proxy(
         return StreamingResponse(resp.aiter_bytes(), media_type="application/x-ndjson")
     await resp.aread()
     return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+
+@app.post("/v1/chat/completions")
+async def chat_completions(
+    request: Request,
+    source: str = Query(None, pattern="^(local|cloud)$"),
+):
+    body = await request.json()
+    model = body.get("model", "")
+    messages = body.get("messages", [])
+    stream = body.get("stream", False)
+
+    ollama_body = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+    }
+
+    resp = await provider.proxy_request("api/chat", ollama_body, stream=stream, source=source)
+
+    if stream:
+        return StreamingResponse(
+            convert_ndjson_to_sse(resp.aiter_bytes(), model),
+            media_type="text/event-stream",
+        )
+
+    await resp.aread()
+    return JSONResponse(
+        content=to_openai_completion(resp.json(), model),
+        status_code=resp.status_code,
+    )
 
 
 if __name__ == "__main__":
